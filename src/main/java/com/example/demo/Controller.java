@@ -3,15 +3,19 @@ package com.example.demo;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api")
 public class Controller {
 
-    @GetMapping("/health")
+    @GetMapping("/")
+    public String root() {
+        return "UP";
+    }
+
+    @GetMapping("/api/health")
     public String health() {
         return "UP";
     }
 
-    @GetMapping("/inventory")
+    @GetMapping("/api/inventory")
     public String inventory() {
         return "Inventory service running";
     }
