@@ -14,7 +14,7 @@
 2. GitHub owner used:
    - `keerthi-mirajkar-ds`
 3. Repository expected by scripts (default):
-   - `inventory_demo`
+   - `inventory-demo`
 
 ## 3. Local verification I ran
 ```cmd
@@ -79,5 +79,5 @@ aws codebuild list-builds-for-project --project-name inventory-codebuild --regio
 ```
 
 ## 9. If repository name is different
-If the repo under `keerthi-mirajkar-ds` is not `inventory_demo`, edit one line in:
+If the repo under `keerthi-mirajkar-ds` is not `inventory-demo`, edit one line in:
 - `setup-aws-cicd.cmd`: `set "GITHUB_REPO=..."`

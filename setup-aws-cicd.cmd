@@ -12,7 +12,7 @@ REM ==========================================================
 
 set "REGION=us-east-2"
 set "GITHUB_OWNER=keerthi-mirajkar-ds"
-set "GITHUB_REPO=inventory_demo"
+set "GITHUB_REPO=inventory-demo"
 set "GITHUB_BRANCH=main"
 set "ECR_REPO_NAME=inventory-app"
 set "CONTAINER_NAME=inventory-task"
@@ -572,3 +572,4 @@ echo ERROR: %FAIL_REASON%
 echo Fix the issue and run again.
 rmdir /s /q "%TMP_DIR%" >nul 2>&1
 exit /b 1
+

@@ -1,1 +1,1 @@
-# inventory_demo
+# inventory-demo
