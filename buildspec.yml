@@ -19,6 +19,8 @@ phases:
       - REPOSITORY_URI=$ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
       - IMAGE_TAG=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
       - if [ -z "$IMAGE_TAG" ]; then IMAGE_TAG=latest; fi
+      - docker --version
+      - docker info > /dev/null
       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
 
   build:
@@ -26,6 +28,10 @@ phases:
       - if [ -f pom.xml ] && [ -f Dockerfile ]; then APP_DIR=.; elif [ -f demo/pom.xml ] && [ -f demo/Dockerfile ]; then APP_DIR=demo; else echo "ERROR Could not find pom.xml and Dockerfile in root or demo/"; exit 1; fi
       - echo "Using app directory $APP_DIR"
       - mvn -f $APP_DIR/pom.xml clean package -DskipTests
+      - JAR_PATH=$(ls -1 $APP_DIR/target/*.jar | grep -v '\.original$' | head -n 1)
+      - if [ -z "$JAR_PATH" ]; then echo "ERROR No runnable jar found in $APP_DIR/target"; ls -la $APP_DIR/target || true; exit 1; fi
+      - cp "$JAR_PATH" "$APP_DIR/target/app.jar"
+      - ls -la $APP_DIR/target
       - docker build -f $APP_DIR/Dockerfile -t $REPOSITORY_URI:$IMAGE_TAG $APP_DIR
       - docker tag $REPOSITORY_URI:$IMAGE_TAG $REPOSITORY_URI:latest
 
