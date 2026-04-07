@@ -36,6 +36,7 @@ aws codestar-connections create-connection --provider-type GitHub --connection-n
 3. Complete GitHub authorization in console:
    - `https://us-east-2.console.aws.amazon.com/codesuite/settings/connections?region=us-east-2`
 4. Copy the real connection ARN (status must be `AVAILABLE`).
+5. Use that ARN directly in `setup-aws-cicd.cmd`.
 
 ## 5. One-command infrastructure + pipeline setup (CMD)
 I used the CMD script:
@@ -60,6 +61,10 @@ setup-aws-cicd.cmd arn:aws:codestar-connections:us-east-2:102700622735:connectio
 5. CodeBuild project using `buildspec.yml` with Docker privileged mode
 6. S3 artifact bucket for pipeline artifacts
 7. CodePipeline stages: Source (GitHub connection) -> Build (CodeBuild) -> Deploy (ECS)
+8. Default deploy target currently configured in script:
+   - Cluster: `inventory-cluster`
+   - Service: `inventory-task-service-fgivxhd5`
+9. The CMD script auto-detects container name from the ECS service task definition and uses it for `imagedefinitions.json`.
 
 ## 7. Project changes I kept
 1. `pom.xml` uses stable Spring Boot dependencies (`3.3.5`)
@@ -71,13 +76,27 @@ setup-aws-cicd.cmd arn:aws:codestar-connections:us-east-2:102700622735:connectio
 4. `setup-aws-cicd.cmd` default GitHub owner is now:
    - `keerthi-mirajkar-ds`
 
-## 8. Useful monitoring commands
+## 8. Useful monitoring commands (current working names)
 ```cmd
-aws codepipeline get-pipeline-state --name inventory-pipeline --region us-east-2
-aws ecs describe-services --cluster inventory-cluster --services inventory-service --region us-east-2
+aws codepipeline list-pipelines --region us-east-2
+aws codepipeline get-pipeline --name inventory-task --region us-east-2
+aws codepipeline get-pipeline-state --name inventory-task --region us-east-2
+aws ecs describe-services --cluster inventory-cluster --services inventory-task-service-fgivxhd5 --region us-east-2
 aws codebuild list-builds-for-project --project-name inventory-codebuild --region us-east-2
 ```
 
 ## 9. If repository name is different
 If the repo under `keerthi-mirajkar-ds` is not `inventory-demo`, edit one line in:
 - `setup-aws-cicd.cmd`: `set "GITHUB_REPO=..."`
+
+## 10. Troubleshooting notes from this run
+1. If you get `No default VPC found in us-east-2`, the updated CMD script now tries this order:
+   - reuse network config from existing ECS service
+   - if service name is not found, auto-pick the first service in the cluster
+   - only then fallback to VPC discovery (default VPC not mandatory)
+2. If Deploy fails with `The AWS ECS container ... does not exist`, run setup again so container name is auto-detected from ECS task definition and passed to CodeBuild.
+3. Ensure pipeline source is GitHub connection:
+```cmd
+aws codepipeline get-pipeline --name inventory-task --region us-east-2 --query "pipeline.stages[0].actions[0].actionTypeId.provider" --output text
+```
+Expected: `CodeStarSourceConnection`

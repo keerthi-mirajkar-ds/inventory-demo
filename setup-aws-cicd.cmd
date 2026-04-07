@@ -17,10 +17,10 @@ set "GITHUB_BRANCH=main"
 set "ECR_REPO_NAME=inventory-app"
 set "CONTAINER_NAME=inventory-task"
 set "CLUSTER_NAME=inventory-cluster"
-set "SERVICE_NAME=inventory-service"
-set "TASK_FAMILY=inventory-taskdef"
+set "SERVICE_NAME=inventory-task-service-fgivxhd5"
+set "TASK_FAMILY=inventory-task"
 set "CODEBUILD_PROJECT_NAME=inventory-codebuild"
-set "PIPELINE_NAME=inventory-pipeline"
+set "PIPELINE_NAME=inventory-task"
 set "START_PIPELINE=true"
 
 if "%~1"=="" (
@@ -50,11 +50,11 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo ==> Checking AWS CLI availability
+echo [INFO] Checking AWS CLI availability
 for /f "usebackq delims=" %%i in (`aws --version 2^>nul`) do set "AWS_VERSION=%%i"
 echo %AWS_VERSION%
 
-echo ==> Validating AWS identity
+echo [INFO] Validating AWS identity
 for /f "usebackq delims=" %%i in (`aws sts get-caller-identity --query Account --output text 2^>nul`) do set "ACCOUNT_ID=%%i"
 if not defined ACCOUNT_ID (
   echo ERROR: Could not get AWS account ID. Check credentials with: aws configure
@@ -62,23 +62,7 @@ if not defined ACCOUNT_ID (
 )
 echo AWS Account: %ACCOUNT_ID%
 
-echo ==> Validating CodeStar connection
-for /f "usebackq delims=" %%i in (`aws codestar-connections get-connection --connection-arn "%CONNECTION_ARN%" --query "Connection.ConnectionStatus" --output text --region "%REGION%" 2^>nul`) do set "CONNECTION_STATUS=%%i"
-if not defined CONNECTION_STATUS (
-  echo ERROR: Could not find this connection ARN:
-  echo   %CONNECTION_ARN%
-  echo Create one with:
-  echo   aws codestar-connections create-connection --provider-type GitHub --connection-name github-inventory --region %REGION%
-  echo Then complete handshake in:
-  echo   https://%REGION%.console.aws.amazon.com/codesuite/settings/connections?region=%REGION%
-  exit /b 1
-)
-if /I not "%CONNECTION_STATUS%"=="AVAILABLE" (
-  echo ERROR: Connection status is %CONNECTION_STATUS% (must be AVAILABLE).
-  echo Complete the GitHub handshake in:
-  echo   https://%REGION%.console.aws.amazon.com/codesuite/settings/connections?region=%REGION%
-  exit /b 1
-)
+echo [INFO] Using provided CodeStar connection ARN
 
 set "ECR_URI=%ACCOUNT_ID%.dkr.ecr.%REGION%.amazonaws.com/%ECR_REPO_NAME%"
 set "TMP_DIR=%TEMP%\aws-cicd-%RANDOM%%RANDOM%"
@@ -138,7 +122,7 @@ set "PIPELINE_JSON=%TMP_DIR%\pipeline.json"
 set "CODEBUILD_ROLE_NAME=%CODEBUILD_PROJECT_NAME%-role"
 set "CODEPIPELINE_ROLE_NAME=%PIPELINE_NAME%-role"
 
-echo ==> Ensuring ECR repository
+echo [INFO] Ensuring ECR repository
 aws ecr describe-repositories --repository-names "%ECR_REPO_NAME%" --region "%REGION%" >nul 2>&1
 if errorlevel 1 (
   aws ecr create-repository --repository-name "%ECR_REPO_NAME%" --image-scanning-configuration scanOnPush=true --region "%REGION%" >nul
@@ -151,7 +135,7 @@ if errorlevel 1 (
   echo ECR repository already exists: %ECR_REPO_NAME%
 )
 
-echo ==> Ensuring ECS task execution role
+echo [INFO] Ensuring ECS task execution role
 aws iam get-role --role-name "ecsTaskExecutionRole" >nul 2>&1
 if errorlevel 1 (
   aws iam create-role --role-name "ecsTaskExecutionRole" --assume-role-policy-document "file://%TRUST_ECS%" >nul
@@ -174,7 +158,7 @@ if not defined ECS_TASK_EXEC_ROLE_ARN (
   goto :fail
 )
 
-echo ==> Ensuring CodeBuild role
+echo [INFO] Ensuring CodeBuild role
 aws iam get-role --role-name "%CODEBUILD_ROLE_NAME%" >nul 2>&1
 if errorlevel 1 (
   aws iam create-role --role-name "%CODEBUILD_ROLE_NAME%" --assume-role-policy-document "file://%TRUST_CODEBUILD%" >nul
@@ -229,7 +213,7 @@ if not defined CODEBUILD_ROLE_ARN (
   goto :fail
 )
 
-echo ==> Ensuring CodePipeline role
+echo [INFO] Ensuring CodePipeline role
 aws iam get-role --role-name "%CODEPIPELINE_ROLE_NAME%" >nul 2>&1
 if errorlevel 1 (
   aws iam create-role --role-name "%CODEPIPELINE_ROLE_NAME%" --assume-role-policy-document "file://%TRUST_CODEPIPELINE%" >nul
@@ -280,10 +264,10 @@ if not defined CODEPIPELINE_ROLE_ARN (
   goto :fail
 )
 
-echo ==> Waiting for IAM role propagation
+echo [INFO] Waiting for IAM role propagation
 timeout /t 12 /nobreak >nul
 
-echo ==> Ensuring ECS cluster
+echo [INFO] Ensuring ECS cluster
 for /f "usebackq delims=" %%i in (`aws ecs describe-clusters --clusters "%CLUSTER_NAME%" --query "clusters[0].status" --output text --region "%REGION%" 2^>nul`) do set "CLUSTER_STATUS=%%i"
 if /I "%CLUSTER_STATUS%"=="None" (
   aws ecs create-cluster --cluster-name "%CLUSTER_NAME%" --region "%REGION%" >nul
@@ -296,38 +280,89 @@ if /I "%CLUSTER_STATUS%"=="None" (
   echo ECS cluster already exists: %CLUSTER_NAME%
 )
 
-echo ==> Getting default VPC, subnets, and security group
-for /f "usebackq delims=" %%i in (`aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query "Vpcs[0].VpcId" --output text --region "%REGION%" 2^>nul`) do set "DEFAULT_VPC_ID=%%i"
-if not defined DEFAULT_VPC_ID (
-  set "FAIL_REASON=No default VPC found in %REGION%."
-  goto :fail
-)
-if /I "%DEFAULT_VPC_ID%"=="None" (
-  set "FAIL_REASON=No default VPC found in %REGION%."
-  goto :fail
-)
-
-for /f "usebackq delims=" %%i in (`aws ec2 describe-subnets --filters Name=vpc-id,Values=%DEFAULT_VPC_ID% --query "join(',',Subnets[].SubnetId)" --output text --region "%REGION%" 2^>nul`) do set "SUBNETS_CSV=%%i"
-if not defined SUBNETS_CSV (
-  set "FAIL_REASON=No subnets found in VPC %DEFAULT_VPC_ID%."
-  goto :fail
-)
-if /I "%SUBNETS_CSV%"=="None" (
-  set "FAIL_REASON=No subnets found in VPC %DEFAULT_VPC_ID%."
-  goto :fail
+set "SERVICE_STATUS="
+set "NETWORK_SERVICE_NAME=%SERVICE_NAME%"
+for /f "usebackq delims=" %%i in (`aws ecs describe-services --cluster "%CLUSTER_NAME%" --services "%SERVICE_NAME%" --query "services[0].status" --output text --region "%REGION%" 2^>nul`) do set "SERVICE_STATUS=%%i"
+if not defined SERVICE_STATUS set "SERVICE_STATUS=None"
+if /I "%SERVICE_STATUS%"=="None" (
+  set "AUTO_SERVICE_ARN="
+  for /f "usebackq delims=" %%i in (`aws ecs list-services --cluster "%CLUSTER_NAME%" --query "serviceArns[0]" --output text --region "%REGION%" 2^>nul`) do set "AUTO_SERVICE_ARN=%%i"
+  if defined AUTO_SERVICE_ARN if /I not "%AUTO_SERVICE_ARN%"=="None" (
+    for /f "usebackq delims=" %%i in (`aws ecs describe-services --cluster "%CLUSTER_NAME%" --services "%AUTO_SERVICE_ARN%" --query "services[0].serviceName" --output text --region "%REGION%" 2^>nul`) do set "NETWORK_SERVICE_NAME=%%i"
+    for /f "usebackq delims=" %%i in (`aws ecs describe-services --cluster "%CLUSTER_NAME%" --services "%AUTO_SERVICE_ARN%" --query "services[0].status" --output text --region "%REGION%" 2^>nul`) do set "SERVICE_STATUS=%%i"
+    if defined NETWORK_SERVICE_NAME if /I not "%NETWORK_SERVICE_NAME%"=="None" set "SERVICE_NAME=%NETWORK_SERVICE_NAME%"
+  )
 )
 
-for /f "usebackq delims=" %%i in (`aws ec2 describe-security-groups --filters Name=vpc-id,Values=%DEFAULT_VPC_ID% Name=group-name,Values=default --query "SecurityGroups[0].GroupId" --output text --region "%REGION%" 2^>nul`) do set "DEFAULT_SG_ID=%%i"
-if not defined DEFAULT_SG_ID (
-  set "FAIL_REASON=Default security group not found in VPC %DEFAULT_VPC_ID%."
-  goto :fail
-)
-if /I "%DEFAULT_SG_ID%"=="None" (
-  set "FAIL_REASON=Default security group not found in VPC %DEFAULT_VPC_ID%."
-  goto :fail
+if /I not "%SERVICE_STATUS%"=="None" (
+  echo [INFO] Using network configuration from existing ECS service: %SERVICE_NAME%
+  set "SUBNETS_CSV="
+  set "SGS_CSV="
+  set "ASSIGN_PUBLIC_IP="
+  for /f "usebackq delims=" %%i in (`aws ecs describe-services --cluster "%CLUSTER_NAME%" --services "%SERVICE_NAME%" --query "join(',',services[0].networkConfiguration.awsvpcConfiguration.subnets)" --output text --region "%REGION%" 2^>nul`) do set "SUBNETS_CSV=%%i"
+  for /f "usebackq delims=" %%i in (`aws ecs describe-services --cluster "%CLUSTER_NAME%" --services "%SERVICE_NAME%" --query "join(',',services[0].networkConfiguration.awsvpcConfiguration.securityGroups)" --output text --region "%REGION%" 2^>nul`) do set "SGS_CSV=%%i"
+  for /f "usebackq delims=" %%i in (`aws ecs describe-services --cluster "%CLUSTER_NAME%" --services "%SERVICE_NAME%" --query "services[0].networkConfiguration.awsvpcConfiguration.assignPublicIp" --output text --region "%REGION%" 2^>nul`) do set "ASSIGN_PUBLIC_IP=%%i"
+  if not defined SUBNETS_CSV (
+    set "FAIL_REASON=Could not read subnets from existing ECS service %SERVICE_NAME%."
+    goto :fail
+  )
+  if /I "%SUBNETS_CSV%"=="None" (
+    set "FAIL_REASON=Could not read subnets from existing ECS service %SERVICE_NAME%."
+    goto :fail
+  )
+  if not defined SGS_CSV (
+    set "FAIL_REASON=Could not read security groups from existing ECS service %SERVICE_NAME%."
+    goto :fail
+  )
+  if /I "%SGS_CSV%"=="None" (
+    set "FAIL_REASON=Could not read security groups from existing ECS service %SERVICE_NAME%."
+    goto :fail
+  )
+  if not defined ASSIGN_PUBLIC_IP set "ASSIGN_PUBLIC_IP=ENABLED"
+  if /I "%ASSIGN_PUBLIC_IP%"=="None" set "ASSIGN_PUBLIC_IP=ENABLED"
+) else (
+  echo [INFO] No ECS service networking found, falling back to EC2 VPC discovery
+  set "DEFAULT_VPC_ID="
+  for /f "usebackq delims=" %%i in (`aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query "Vpcs[0].VpcId" --output text --region "%REGION%" 2^>nul`) do set "DEFAULT_VPC_ID=%%i"
+  if not defined DEFAULT_VPC_ID (
+    for /f "usebackq delims=" %%i in (`aws ec2 describe-vpcs --query "Vpcs[0].VpcId" --output text --region "%REGION%" 2^>nul`) do set "DEFAULT_VPC_ID=%%i"
+  )
+  if not defined DEFAULT_VPC_ID (
+    set "FAIL_REASON=No VPC found in %REGION%. Create a VPC and subnets first."
+    goto :fail
+  )
+  if /I "%DEFAULT_VPC_ID%"=="None" (
+    set "FAIL_REASON=No VPC found in %REGION%. Create a VPC and subnets first."
+    goto :fail
+  )
+
+  for /f "usebackq delims=" %%i in (`aws ec2 describe-subnets --filters Name=vpc-id,Values=%DEFAULT_VPC_ID% --query "join(',',Subnets[].SubnetId)" --output text --region "%REGION%" 2^>nul`) do set "SUBNETS_CSV=%%i"
+  if not defined SUBNETS_CSV (
+    set "FAIL_REASON=No subnets found in VPC %DEFAULT_VPC_ID%."
+    goto :fail
+  )
+  if /I "%SUBNETS_CSV%"=="None" (
+    set "FAIL_REASON=No subnets found in VPC %DEFAULT_VPC_ID%."
+    goto :fail
+  )
+
+  for /f "usebackq delims=" %%i in (`aws ec2 describe-security-groups --filters Name=vpc-id,Values=%DEFAULT_VPC_ID% Name=group-name,Values=default --query "SecurityGroups[0].GroupId" --output text --region "%REGION%" 2^>nul`) do set "DEFAULT_SG_ID=%%i"
+  if not defined DEFAULT_SG_ID (
+    for /f "usebackq delims=" %%i in (`aws ec2 describe-security-groups --filters Name=vpc-id,Values=%DEFAULT_VPC_ID% --query "SecurityGroups[0].GroupId" --output text --region "%REGION%" 2^>nul`) do set "DEFAULT_SG_ID=%%i"
+  )
+  if not defined DEFAULT_SG_ID (
+    set "FAIL_REASON=No security group found in VPC %DEFAULT_VPC_ID%."
+    goto :fail
+  )
+  if /I "%DEFAULT_SG_ID%"=="None" (
+    set "FAIL_REASON=No security group found in VPC %DEFAULT_VPC_ID%."
+    goto :fail
+  )
+  set "SGS_CSV=%DEFAULT_SG_ID%"
+  set "ASSIGN_PUBLIC_IP=ENABLED"
 )
 
-echo ==> Ensuring CloudWatch log group
+echo [INFO] Ensuring CloudWatch log group
 for /f "usebackq delims=" %%i in (`aws logs describe-log-groups --log-group-name-prefix "/ecs/%TASK_FAMILY%" --query "logGroups[?logGroupName=='/ecs/%TASK_FAMILY%'] | [0].logGroupName" --output text --region "%REGION%" 2^>nul`) do set "CW_LOG_GROUP=%%i"
 if /I "%CW_LOG_GROUP%"=="None" (
   aws logs create-log-group --log-group-name "/ecs/%TASK_FAMILY%" --region "%REGION%" >nul
@@ -340,7 +375,7 @@ if /I "%CW_LOG_GROUP%"=="None" (
   echo CloudWatch log group exists: /ecs/%TASK_FAMILY%
 )
 
-echo ==> Registering ECS task definition
+echo [INFO] Registering ECS task definition
 > "%TASKDEF_JSON%" (
   echo {
   echo   "family": "%TASK_FAMILY%",
@@ -379,9 +414,9 @@ if not defined TASKDEF_ARN (
   goto :fail
 )
 
-echo ==> Ensuring ECS service
+echo [INFO] Ensuring ECS service
 for /f "usebackq delims=" %%i in (`aws ecs describe-services --cluster "%CLUSTER_NAME%" --services "%SERVICE_NAME%" --query "services[0].status" --output text --region "%REGION%" 2^>nul`) do set "SERVICE_STATUS=%%i"
-set "NETWORK_CFG=awsvpcConfiguration={subnets=[%SUBNETS_CSV%],securityGroups=[%DEFAULT_SG_ID%],assignPublicIp=ENABLED}"
+set "NETWORK_CFG=awsvpcConfiguration={subnets=[%SUBNETS_CSV%],securityGroups=[%SGS_CSV%],assignPublicIp=%ASSIGN_PUBLIC_IP%}"
 if /I "%SERVICE_STATUS%"=="None" (
   aws ecs create-service --cluster "%CLUSTER_NAME%" --service-name "%SERVICE_NAME%" --task-definition "%TASKDEF_ARN%" --desired-count 1 --launch-type FARGATE --platform-version LATEST --network-configuration "%NETWORK_CFG%" --region "%REGION%" >nul
   if errorlevel 1 (
@@ -398,7 +433,32 @@ if /I "%SERVICE_STATUS%"=="None" (
   echo Updated ECS service: %SERVICE_NAME%
 )
 
-echo ==> Ensuring CodeBuild project
+echo [INFO] Detecting ECS container name for deployment mapping
+set "SERVICE_TASKDEF_ARN="
+for /f "usebackq delims=" %%i in (`aws ecs describe-services --cluster "%CLUSTER_NAME%" --services "%SERVICE_NAME%" --query "services[0].taskDefinition" --output text --region "%REGION%" 2^>nul`) do set "SERVICE_TASKDEF_ARN=%%i"
+if not defined SERVICE_TASKDEF_ARN (
+  set "FAIL_REASON=Could not read task definition ARN from ECS service %SERVICE_NAME%."
+  goto :fail
+)
+if /I "%SERVICE_TASKDEF_ARN%"=="None" (
+  set "FAIL_REASON=Could not read task definition ARN from ECS service %SERVICE_NAME%."
+  goto :fail
+)
+
+set "DETECTED_CONTAINER_NAME="
+for /f "usebackq delims=" %%i in (`aws ecs describe-task-definition --task-definition "%SERVICE_TASKDEF_ARN%" --query "taskDefinition.containerDefinitions[0].name" --output text --region "%REGION%" 2^>nul`) do set "DETECTED_CONTAINER_NAME=%%i"
+if not defined DETECTED_CONTAINER_NAME (
+  set "FAIL_REASON=Could not detect container name from task definition %SERVICE_TASKDEF_ARN%."
+  goto :fail
+)
+if /I "%DETECTED_CONTAINER_NAME%"=="None" (
+  set "FAIL_REASON=Could not detect container name from task definition %SERVICE_TASKDEF_ARN%."
+  goto :fail
+)
+set "CONTAINER_NAME=%DETECTED_CONTAINER_NAME%"
+echo Using ECS container name: %CONTAINER_NAME%
+
+echo [INFO] Ensuring CodeBuild project
 for /f "usebackq delims=" %%i in (`aws codebuild batch-get-projects --names "%CODEBUILD_PROJECT_NAME%" --query "projects[0].name" --output text --region "%REGION%" 2^>nul`) do set "CODEBUILD_EXISTS=%%i"
 set "CB_SOURCE=type=CODEPIPELINE,buildspec=buildspec.yml"
 set "CB_ARTIFACTS=type=CODEPIPELINE"
@@ -419,7 +479,7 @@ if /I "%CODEBUILD_EXISTS%"=="None" (
   echo Updated CodeBuild project: %CODEBUILD_PROJECT_NAME%
 )
 
-echo ==> Ensuring S3 artifact bucket
+echo [INFO] Ensuring S3 artifact bucket
 set "ARTIFACT_BUCKET=%PIPELINE_NAME%-artifacts-%ACCOUNT_ID%-%REGION%"
 aws s3api head-bucket --bucket "%ARTIFACT_BUCKET%" >nul 2>&1
 if errorlevel 1 (
@@ -442,7 +502,7 @@ if errorlevel 1 (
   goto :fail
 )
 
-echo ==> Ensuring CodePipeline
+echo [INFO] Ensuring CodePipeline
 > "%PIPELINE_JSON%" (
   echo {
   echo   "pipeline": {
@@ -539,12 +599,7 @@ if errorlevel 1 (
 )
 
 if /I "%START_PIPELINE%"=="true" (
-  echo ==> Starting pipeline execution
-  aws codepipeline start-pipeline-execution --name "%PIPELINE_NAME%" --region "%REGION%" >nul
-  if errorlevel 1 (
-    set "FAIL_REASON=Failed to start CodePipeline."
-    goto :fail
-  )
+  call :start_pipeline_with_retry
 )
 
 echo.
@@ -564,6 +619,21 @@ echo aws codepipeline get-pipeline-state --name %PIPELINE_NAME% --region %REGION
 echo aws ecs describe-services --cluster %CLUSTER_NAME% --services %SERVICE_NAME% --region %REGION%
 
 rmdir /s /q "%TMP_DIR%" >nul 2>&1
+exit /b 0
+
+:start_pipeline_with_retry
+echo [INFO] Starting pipeline execution
+for /L %%R in (1,1,6) do (
+  aws codepipeline start-pipeline-execution --name "%PIPELINE_NAME%" --region "%REGION%" >nul 2>&1
+  if not errorlevel 1 (
+    echo Pipeline execution started.
+    exit /b 0
+  )
+  timeout /t 10 /nobreak >nul
+)
+echo WARNING: Could not auto-start pipeline right now.
+echo Run this manually after 1 minute:
+echo   aws codepipeline start-pipeline-execution --name "%PIPELINE_NAME%" --region "%REGION%"
 exit /b 0
 
 :fail

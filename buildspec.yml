@@ -23,8 +23,10 @@ phases:
 
   build:
     commands:
-      - mvn clean package -DskipTests
-      - docker build -t $REPOSITORY_URI:$IMAGE_TAG .
+      - if [ -f pom.xml ] && [ -f Dockerfile ]; then APP_DIR=.; elif [ -f demo/pom.xml ] && [ -f demo/Dockerfile ]; then APP_DIR=demo; else echo "ERROR: Could not find pom.xml and Dockerfile in root or demo/"; exit 1; fi
+      - echo "Using app directory: $APP_DIR"
+      - mvn -f $APP_DIR/pom.xml clean package -DskipTests
+      - docker build -f $APP_DIR/Dockerfile -t $REPOSITORY_URI:$IMAGE_TAG $APP_DIR
       - docker tag $REPOSITORY_URI:$IMAGE_TAG $REPOSITORY_URI:latest
 
   post_build:
