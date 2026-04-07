@@ -1,4 +1,4 @@
-FROM eclipse-temurin:17-jre
+FROM public.ecr.aws/amazoncorretto/amazoncorretto:17
 WORKDIR /app
 ARG JAR_FILE=target/app.jar
 COPY ${JAR_FILE} app.jar

@@ -100,3 +100,5 @@ If the repo under `keerthi-mirajkar-ds` is not `inventory-demo`, edit one line i
 aws codepipeline get-pipeline --name inventory-task --region us-east-2 --query "pipeline.stages[0].actions[0].actionTypeId.provider" --output text
 ```
 Expected: `CodeStarSourceConnection`
+4. If Build fails with Docker Hub `429 Too Many Requests` on `eclipse-temurin`, switch Docker base image to AWS Public ECR:
+   - `FROM public.ecr.aws/amazoncorretto/amazoncorretto:17`
